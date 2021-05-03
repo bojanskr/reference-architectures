@@ -1,4 +1,4 @@
-# Stream processing with Azure Stream Analytics
+# Stream processing with Azure Stream Analytics.
 
 ### This content has been moved to the following location:
 
