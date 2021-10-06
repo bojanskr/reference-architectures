@@ -37,6 +37,8 @@ export SQLADMINPASSWORD
 
 Download `rundeployment.sh` from this repo and execute it. This will take about 20 minutes to execute.
 
+<sup>Note: The script requires jq. If it's not installed, execute the following command prior to running the deployment script: ```sudo apt install jq``` </sup> 
+
 ```bash
 wget ${DEPLOYMENT}rundeployment.sh
 chmod +x rundeployment.sh
