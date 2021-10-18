@@ -4,10 +4,9 @@
 // ------------------------------------------------------------
 
 using System;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.Azure.ServiceBus;
+using Azure.Messaging.ServiceBus;
 using VotingWeb.Exceptions;
 using VotingWeb.Interfaces;
 
@@ -15,13 +14,14 @@ namespace VotingWeb.Clients
 {
     public class VoteQueueClient : IVoteQueueClient
     {
-        private readonly IQueueClient queueClient;
+        private readonly ServiceBusSender queueClient;
 
         public VoteQueueClient(string connectionString, string queueName)
         {
             try
             {
-                queueClient = new QueueClient(connectionString, queueName);
+                var serviceBusClient = new ServiceBusClient(connectionString);
+                queueClient = serviceBusClient.CreateSender(queueName);
             }
             catch (Exception ex) when (ex is ArgumentException ||
                               ex is ServiceBusException ||
@@ -38,18 +38,14 @@ namespace VotingWeb.Clients
 
             try
             {
-                var message = new Message(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(messageBody)))
+                await queueClient.SendMessageAsync(new ServiceBusMessage(JsonSerializer.Serialize(messageBody))
                 {
-                    ContentType = "application/json",
-                };
-
-                await queueClient.SendAsync(message);
+                    ContentType = "application/json"
+                });
             }
             catch (Exception ex) when (ex is ArgumentException ||
                                  ex is ServiceBusException ||
-                                 ex is UnauthorizedAccessException ||
-                                 ex is ServerBusyException ||
-                                 ex is ServiceBusTimeoutException)
+                                 ex is UnauthorizedAccessException)
             {
                 throw new VoteQueueException("Service Bus Exception occurred with sending message to queue", ex);
             }

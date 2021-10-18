@@ -2,67 +2,82 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "VotingApi_name": {
-      "defaultValue": "[concat( 'votingapi-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
     "VotingWeb_name": {
-      "defaultValue": "[concat( 'votingweb-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
-    "Votingrediscache_name": {
-      "defaultValue": "[concat( 'votingcache-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
-    "VotingApiPlan_name": {
-      "defaultValue": "[concat('votingapiplan-', uniqueString(resourceGroup().id))]",
-      "type": "string"
-    },
-    "VotingWebPlan_name": {
-      "defaultValue": "[concat('votingwebplan-', uniqueString(resourceGroup().id)) ]",
-      "type": "string"
-    },
-    "FunctionVoteCounter_name": {
-      "defaultValue": "[concat('functionvotecounter-', uniqueString(resourceGroup().id))]",
-      "type": "string"
-    },
-    "servicebusvotingns_name": {
-      "defaultValue": "[concat( 'votingsb-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
-    "FunctionVoteCounterPlan_name": {
-      "defaultValue": "[concat( 'functionvotercounterplan-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
-    "databaseAccounts_votingcosmos_name": {
-      "defaultValue": "[concat( 'votingcosmos-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
-    },
-    "FunctionstorageAccount": {
-      "defaultValue": "[toLower(concat('function', uniqueString(resourceGroup().id) )) ]",
-      "type": "string"
-    },
-    "ResourcestorageAccount": {
-      "defaultValue": "[toLower(concat('rsr', uniqueString(resourceGroup().id) )) ]",
-      "type": "string"
-    },
-    "frontdoors_VotingFrontDoor_name": {
-      "defaultValue": "[concat( 'VotingFrontDoor-',uniqueString(resourceGroup().id) ) ]",
-      "type": "string"
+      "type": "string",
+      "minLength": 3,
+      "metadata": {
+        "description": "Must be a globally unique string as it is used for a DNS record."
+      }
     },
     "SqlConnectionString": {
-      "defaultValue": "SQL_CONNECTION_STRING",
-      "type": "securestring"
+      "type": "securestring",
+      "minLength": 20,
+      "metadata": {
+        "description": "Connection string with app-auth permissions. Ideally this would use managed identity, but the workload currently does not."
+      }
     }
   },
   "variables": {
-    "location": "[resourceGroup().location]"
+    "location": "[resourceGroup().location]",
+    "suffix": "[uniqueString(resourceGroup().id)]",
+    "VotingApi_name": "[concat('web-votingapi-', variables('suffix'))]",
+    "Votingrediscache_name": "[concat('redis-voting-', variables('suffix'))]",
+    "VotingApiPlan_name": "[concat('plan-votingapi-', variables('suffix'))]",
+    "VotingWebPlan_name": "[concat('plan-votingweb-', variables('suffix'))]",
+    "FunctionVoteCounter_name": "[concat('func-votecounter-', variables('suffix'))]",
+    "servicebusvotingns_name": "[concat('sb-voting-', variables('suffix'))]",
+    "FunctionVoteCounterPlan_name": "[concat('plan-func-votecounter-', variables('suffix'))]",
+    "databaseAccounts_votingcosmos_name": "[concat('cosmos-voting-', variables('suffix'))]",
+    "FunctionstorageAccount": "[toLower(concat('stfn', variables('suffix')))]",
+    "frontdoors_VotingFrontDoor_name": "[concat('fd-voting-', variables('suffix'))]"
   },
   "resources": [
     {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2020-10-01",
+      "name": "ws-applicationinsights",
+      "location": "[variables('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        },
+        "workspaceCapping": {
+          "dailyQuotaGb": -1
+        },
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled",
+        "forceCmkForQuery": false
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2020-10-01",
+      "name": "ws-resourcelogs",
+      "location": "[variables('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30,
+        "features": {
+          "enableLogAccessUsingOnlyResourcePermissions": true
+        },
+        "workspaceCapping": {
+          "dailyQuotaGb": -1
+        },
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled",
+        "forceCmkForQuery": false
+      }
+    },
+    {
       "type": "Microsoft.Cache/Redis",
-      "apiVersion": "2017-10-01",
-      "name": "[parameters('Votingrediscache_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('Votingrediscache_name')]",
       "location": "[variables('location')]",
       "properties": {
         "sku": {
@@ -71,27 +86,55 @@
           "capacity": 3
         },
         "enableNonSslPort": false,
+        "minimumTlsVersion": "1.2",
+        "publicNetworkAccess": "Enabled",
         "redisConfiguration": {
           "maxclients": "5000"
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Cache/Redis', variables('Votingrediscache_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "ConnectedClientList",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.DocumentDB/databaseAccounts",
-      "apiVersion": "2015-04-08",
-      "name": "[parameters('databaseAccounts_votingcosmos_name')]",
+      "apiVersion": "2021-04-01-preview",
+      "name": "[variables('databaseAccounts_votingcosmos_name')]",
       "location": "[variables('location')]",
       "tags": {
         "defaultExperience": "Core (SQL)"
       },
       "kind": "GlobalDocumentDB",
       "properties": {
-        "ipRangeFilter": "",
+        "createMode": "Default",
+        "ipRules": [],
         "enableAutomaticFailover": false,
         "enableMultipleWriteLocations": true,
         "isVirtualNetworkFilterEnabled": false,
-        "virtualNetworkRules": [
-        ],
+        "virtualNetworkRules": [],
         "databaseAccountOfferType": "Standard",
         "consistencyPolicy": {
           "defaultConsistencyLevel": "Session",
@@ -104,64 +147,235 @@
             "failoverPriority": 0
           }
         ],
-        "capabilities": [
-        ]
-      }
+        "capabilities": [],
+        "cors": [],
+        "networkAclBypassResourceIds": []
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('databaseAccounts_votingcosmos_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "DataPlaneRequests",
+                "enabled": true
+              },
+              {
+                "category": "MongoRequests",
+                "enabled": false
+              },
+              {
+                "category": "QueryRuntimeStatistics",
+                "enabled": true
+              },
+              {
+                "category": "PartitionKeyStatistics",
+                "enabled": true
+              },
+              {
+                "category": "PartitionKeyRUConsumption",
+                "enabled": true
+              },
+              {
+                "category": "ControlPlaneRequests",
+                "enabled": true
+              },
+              {
+                "category": "CassandraRequests",
+                "enabled": false
+              },
+              {
+                "category": "GremlinRequests",
+                "enabled": false
+              },
+              {
+                "category": "TableApiRequests",
+                "enabled": false
+              }
+            ],
+            "metrics": [
+              {
+                "category": "Requests",
+                "enabled": false
+              }
+            ]
+          }
+        },
+        {
+          "type": "sqlDatabases",
+          "apiVersion": "2021-05-15",
+          "name": "cacheDB",
+          "dependsOn": [
+            "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('databaseAccounts_votingcosmos_name'))]"
+          ],
+          "properties": {
+            "resource": {
+              "id": "cacheDB"
+            }
+          },
+          "resources": [
+            {
+              "type": "containers",
+              "apiVersion": "2021-05-15",
+              "name": "cacheContainer",
+              "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('databaseAccounts_votingcosmos_name'), 'cacheDB')]"
+              ],
+              "properties": {
+                "resource": {
+                  "id": "cacheContainer",
+                  "indexingPolicy": {
+                    "indexingMode": "consistent",
+                    "automatic": true
+                  },
+                  "partitionKey": {
+                    "paths": [
+                      "/MessageType"
+                    ],
+                    "kind": "Hash"
+                  },
+                  "conflictResolutionPolicy": {
+                    "mode": "LastWriterWins",
+                    "conflictResolutionPath": "/_ts"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     {
-      "type": "microsoft.insights/components",
-      "apiVersion": "2015-05-01",
-      "name": "[parameters('FunctionVoteCounter_name')]",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('FunctionVoteCounter_name')]",
       "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
+      ],
       "tags": {
-        "applicationType": "web",
-        "[concat('hidden-link:/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name,'/providers/Microsoft.Web/sites/',parameters('FunctionVoteCounter_name'))]": "Resource"
+        "applicationType": "web"
       },
       "kind": "web",
       "properties": {
-        "Application_Type": "web"
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
       }
     },
     {
-      "type": "microsoft.insights/components",
-      "apiVersion": "2015-05-01",
-      "name": "[parameters('VotingApi_name')]",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('VotingApi_name')]",
       "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
+      ],
       "kind": "web",
       "properties": {
-        "Application_Type": "web"
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
       }
     },
     {
-      "type": "microsoft.insights/components",
-      "apiVersion": "2015-05-01",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
       "name": "[parameters('VotingWeb_name')]",
       "location": "[variables('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
+      ],
       "kind": "web",
       "properties": {
-        "Application_Type": "web"
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-applicationinsights')]"
       }
     },
     {
       "type": "Microsoft.ServiceBus/namespaces",
-      "apiVersion": "2017-04-01",
-      "name": "[parameters('servicebusvotingns_name')]",
+      "apiVersion": "2021-01-01-preview",
+      "name": "[variables('servicebusvotingns_name')]",
       "location": "[variables('location')]",
       "sku": {
         "name": "Premium",
         "tier": "Premium",
         "capacity": 1
       },
-      "properties": {
-        "metricId": "[concat(subscription().tenantId,':', parameters('servicebusvotingns_name'))]",
-        "serviceBusEndpoint": "[concat('https://', parameters('servicebusvotingns_name'), '.servicebus.windows.net:443/')]",
-        "status": "Active"
-      }
+      "properties": {},
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.ServiceBus/namespaces', variables('servicebusvotingns_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "OperationalLogs",
+                "enabled": true
+              },
+              {
+                "category": "VNetAndIPFilteringLogs",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        },
+        {
+          "type": "AuthorizationRules",
+          "apiVersion": "2021-01-01-preview",
+          "name": "RootManageSharedAccessKey",
+          "dependsOn": [
+            "[resourceId('Microsoft.ServiceBus/namespaces', variables('servicebusvotingns_name'))]"
+          ],
+          "properties": {
+            "rights": [
+              "Listen",
+              "Manage",
+              "Send"
+            ]
+          }
+        },
+        {
+          "type": "queues",
+          "apiVersion": "2021-01-01-preview",
+          "name": "sbq-voting",
+          "dependsOn": [
+            "[resourceId('Microsoft.ServiceBus/namespaces', variables('servicebusvotingns_name'))]"
+          ],
+          "properties": {
+            "maxSizeInMegabytes": 1024,
+            "lockDuration": "PT1M",
+            "requiresDuplicateDetection": false,
+            "requiresSession": false,
+            "enableBatchedOperations": true,
+            "maxDeliveryCount": 10,
+            "enablePartitioning": false,
+            "enableExpress": false
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Storage/storageAccounts",
-      "apiVersion": "2018-07-01",
-      "name": "[parameters('ResourcestorageAccount')]",
+      "apiVersion": "2021-04-01",
+      "name": "[variables('FunctionstorageAccount')]",
       "location": "[variables('location')]",
       "sku": {
         "name": "Standard_LRS",
@@ -171,10 +385,8 @@
       "properties": {
         "networkAcls": {
           "bypass": "AzureServices",
-          "virtualNetworkRules": [
-          ],
-          "ipRules": [
-          ],
+          "virtualNetworkRules": [],
+          "ipRules": [],
           "defaultAction": "Allow"
         },
         "supportsHttpsTrafficOnly": true,
@@ -189,66 +401,66 @@
           },
           "keySource": "Microsoft.Storage"
         }
-      }
-    },
-    {
-      "type": "Microsoft.Storage/storageAccounts",
-      "apiVersion": "2018-07-01",
-      "name": "[parameters('FunctionstorageAccount')]",
-      "location": "[variables('location')]",
-      "sku": {
-        "name": "Standard_LRS",
-        "tier": "Standard"
       },
-      "kind": "Storage",
-      "properties": {
-        "networkAcls": {
-          "bypass": "AzureServices",
-          "virtualNetworkRules": [
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Storage/storageAccounts', variables('FunctionstorageAccount'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
           ],
-          "ipRules": [
-          ],
-          "defaultAction": "Allow"
-        },
-        "supportsHttpsTrafficOnly": true,
-        "encryption": {
-          "services": {
-            "file": {
-              "enabled": true
-            },
-            "blob": {
-              "enabled": true
-            }
-          },
-          "keySource": "Microsoft.Storage"
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [],
+            "metrics": [
+              {
+                "category": "Transaction",
+                "enabled": false
+              }
+            ]
+          }
         }
-      }
+      ]
     },
     {
       "type": "Microsoft.Web/serverfarms",
-      "apiVersion": "2016-09-01",
-      "name": "[parameters('FunctionVoteCounterPlan_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('FunctionVoteCounterPlan_name')]",
       "location": "[variables('location')]",
       "sku": {
         "name": "Y1",
-        "tier": "Dynamic",
-        "size": "Y1",
-        "family": "Y",
-        "capacity": 0
+        "tier": "Dynamic"
       },
       "kind": "functionapp",
-      "properties": {
-        "name": "[parameters('FunctionVoteCounterPlan_name')]",
-        "perSiteScaling": false,
-        "reserved": false,
-        "targetWorkerCount": 0,
-        "targetWorkerSizeId": 0
-      }
+      "properties": {},
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/serverfarms', variables('FunctionVoteCounterPlan_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Web/serverfarms",
-      "apiVersion": "2016-09-01",
-      "name": "[parameters('VotingApiPlan_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('VotingApiPlan_name')]",
       "location": "[variables('location')]",
       "sku": {
         "name": "S1",
@@ -259,17 +471,37 @@
       },
       "kind": "app",
       "properties": {
-        "name": "[parameters('VotingApiPlan_name')]",
         "perSiteScaling": false,
         "reserved": false,
         "targetWorkerCount": 0,
         "targetWorkerSizeId": 0
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/serverfarms', variables('VotingApiPlan_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Web/serverfarms",
-      "apiVersion": "2016-09-01",
-      "name": "[parameters('VotingWebPlan_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('VotingWebPlan_name')]",
       "location": "[variables('location')]",
       "sku": {
         "name": "S1",
@@ -280,112 +512,54 @@
       },
       "kind": "app",
       "properties": {
-        "name": "[parameters('VotingWebPlan_name')]",
         "perSiteScaling": false,
         "reserved": false,
         "targetWorkerCount": 0,
         "targetWorkerSizeId": 0
-      }
-    },
-    {
-      "type": "Microsoft.ServiceBus/namespaces/AuthorizationRules",
-      "apiVersion": "2017-04-01",
-      "name": "[concat(parameters('servicebusvotingns_name'), '/RootManageSharedAccessKey')]",
-      "location": "[variables('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]"
-      ],
-      "properties": {
-        "rights": [
-          "Listen",
-          "Manage",
-          "Send"
-        ]
-      }
-    },
-    {
-      "type": "Microsoft.ServiceBus/namespaces/queues",
-      "apiVersion": "2017-04-01",
-      "name": "[concat(parameters('servicebusvotingns_name'), '/queue')]",
-      "location": "[variables('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]"
-      ],
-      "properties": {
-        "lockDuration": "PT1M",
-        "maxSizeInMegabytes": 1024,
-        "requiresDuplicateDetection": false,
-        "requiresSession": false,
-        "defaultMessageTimeToLive": "P10675199DT2H48M5.4775807S",
-        "deadLetteringOnMessageExpiration": false,
-        "enableBatchedOperations": true,
-        "duplicateDetectionHistoryTimeWindow": "PT10M",
-        "maxDeliveryCount": 10,
-        "status": "Active",
-        "autoDeleteOnIdle": "P10675199DT2H48M5.4775807S",
-        "enablePartitioning": false,
-        "enableExpress": false
-      }
-    },
-    {
-      "type": "Microsoft.ServiceBus/namespaces/queues",
-      "apiVersion": "2017-04-01",
-      "name": "[concat(parameters('servicebusvotingns_name'), '/votingqueue')]",
-      "location": "[variables('location')]",
-      "dependsOn": [
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]"
-      ],
-      "properties": {
-        "lockDuration": "PT1M",
-        "maxSizeInMegabytes": 1024,
-        "requiresDuplicateDetection": false,
-        "requiresSession": false,
-        "defaultMessageTimeToLive": "P10675199DT2H48M5.4775807S",
-        "deadLetteringOnMessageExpiration": false,
-        "enableBatchedOperations": true,
-        "duplicateDetectionHistoryTimeWindow": "PT10M",
-        "maxDeliveryCount": 10,
-        "status": "Active",
-        "autoDeleteOnIdle": "P10675199DT2H48M5.4775807S",
-        "enablePartitioning": false,
-        "enableExpress": false
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/serverfarms', variables('VotingWebPlan_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Web/sites",
-      "apiVersion": "2016-08-01",
-      "name": "[parameters('FunctionVoteCounter_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('FunctionVoteCounter_name')]",
       "location": "[variables('location')]",
       "dependsOn": [
-        "[resourceId('Microsoft.Web/serverfarms', parameters('FunctionVoteCounterPlan_name'))]",
-        "[resourceId('microsoft.insights/components', parameters('FunctionVoteCounter_name'))]",
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]",
-        "[resourceId('Microsoft.Cache/Redis', parameters('Votingrediscache_name'))]"
+        "[resourceId('Microsoft.Web/serverfarms', variables('FunctionVoteCounterPlan_name'))]",
+        "[resourceId('Microsoft.Insights/components', variables('FunctionVoteCounter_name'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('FunctionstorageAccount'))]",
+        "[resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', variables('servicebusvotingns_name'), 'RootManageSharedAccessKey')]"
       ],
       "tags": {
-        "[concat('hidden-link:/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name,'/providers/Microsoft.Web/serverfarms/',parameters('FunctionVoteCounterPlan_name'))]": "empty"
+        "[concat('hidden-link:/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Web/serverfarms/', variables('FunctionVoteCounterPlan_name'))]": "empty"
       },
       "kind": "functionapp",
       "identity": {
-        "principalId": null,
-        "tenantId": null,
         "type": "SystemAssigned"
       },
       "properties": {
         "enabled": true,
-        "hostNameSslStates": [
-          {
-            "name": "[concat(parameters('FunctionVoteCounter_name'),'.azurewebsites.net')]",
-            "sslState": "Disabled",
-            "hostType": "Standard"
-          },
-          {
-            "name": "[concat(parameters('FunctionVoteCounter_name'),'.scm.azurewebsites.net')]",
-            "sslState": "Disabled",
-            "hostType": "Repository"
-          }
-        ],
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('FunctionVoteCounterPlan_name'))]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('FunctionVoteCounterPlan_name'))]",
         "reserved": false,
         "scmSiteAlsoStopped": false,
         "clientAffinityEnabled": false,
@@ -395,10 +569,10 @@
         "dailyMemoryTimeQuota": 0,
         "httpsOnly": true,
         "siteConfig": {
-          "netFrameworkVersion": "v4.7",
-          "phpVersion": "5.6",
-          "pythonVersion": "",
-          "nodeVersion": "",
+          "netFrameworkVersion": "[null()]",
+          "phpVersion": "[null()]",
+          "pythonVersion": "[null()]",
+          "nodeVersion": "[null()]",
           "linuxFxVersion": "",
           "requestTracingEnabled": false,
           "remoteDebuggingEnabled": false,
@@ -408,34 +582,74 @@
           "publishingUsername": "$VotingWeb",
           "appSettings": [
             {
-              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
-              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('FunctionVoteCounter_name')), '2014-04-01').InstrumentationKey]"
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('FunctionVoteCounter_name')), '2020-02-02').ConnectionString]"
             },
             {
               "name": "SERVICEBUS_CONNECTION_STRING",
-              "value": "[listKeys(resourceId(concat('Microsoft.ServiceBus/namespaces/AuthorizationRules'),parameters('servicebusvotingns_name'),'RootManageSharedAccessKey'),'2015-08-01').primaryConnectionString]"
+              "value": "[listKeys(resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', variables('servicebusvotingns_name'), 'RootManageSharedAccessKey'), '2021-01-01-preview').primaryConnectionString]"
             },
             {
               "name": "sqldb_connection",
               "value": "[parameters('SqlConnectionString')]"
+            },
+            {
+              "name": "AzureWebJobsStorage",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('FunctionstorageAccount'), ';EndpointSuffix=', environment().suffixes.storage, ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('FunctionstorageAccount')), '2019-06-01').keys[0].value)]"
+            },
+            {
+              "name": "FUNCTIONS_WORKER_RUNTIME",
+              "value": "dotnet"
+            },
+            {
+              "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('FunctionstorageAccount'), ';EndpointSuffix=', environment().suffixes.storage, ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('FunctionstorageAccount')), '2019-06-01').keys[0].value)]"
+            },
+            {
+              "name": "FUNCTIONS_EXTENSION_VERSION",
+              "value": "~3"
             }
           ]
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', variables('FunctionVoteCounter_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "FunctionAppLogs",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Web/sites",
-      "apiVersion": "2016-08-01",
-      "name": "[parameters('VotingApi_name')]",
+      "apiVersion": "2020-12-01",
+      "name": "[variables('VotingApi_name')]",
       "location": "[variables('location')]",
       "dependsOn": [
-        "[resourceId('Microsoft.Web/serverfarms', parameters('VotingApiPlan_name'))]",
-        "[resourceId('microsoft.insights/components', parameters('VotingApi_name'))]",
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]",
-        "[resourceId('Microsoft.Cache/Redis', parameters('Votingrediscache_name'))]"
+        "[resourceId('Microsoft.Web/serverfarms', variables('VotingApiPlan_name'))]",
+        "[resourceId('Microsoft.Insights/components', variables('VotingApi_name'))]"
       ],
       "tags": {
-        "[concat('hidden-link:/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name,'/providers/Microsoft.Web/serverfarms/',parameters('VotingApiPlan_name'))]": "empty"
+        "[concat('hidden-link:/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Web/serverfarms/', variables('VotingApiPlan_name'))]": "empty"
       },
       "kind": "app",
       "identity": {
@@ -447,17 +661,17 @@
         "enabled": true,
         "hostNameSslStates": [
           {
-            "name": "[concat(parameters('VotingApi_name'),'.azurewebsites.net')]",
+            "name": "[concat(variables('VotingApi_name'), '.azurewebsites.net')]",
             "sslState": "Disabled",
             "hostType": "Standard"
           },
           {
-            "name": "[concat(parameters('VotingApi_name'),'.scm.azurewebsites.net')]",
+            "name": "[concat(variables('VotingApi_name'), '.scm.azurewebsites.net')]",
             "sslState": "Disabled",
             "hostType": "Repository"
           }
         ],
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('VotingApiPlan_name'))]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('VotingApiPlan_name'))]",
         "reserved": false,
         "scmSiteAlsoStopped": false,
         "clientAffinityEnabled": true,
@@ -467,10 +681,10 @@
         "dailyMemoryTimeQuota": 0,
         "httpsOnly": true,
         "siteConfig": {
-          "netFrameworkVersion": "v4.7",
-          "phpVersion": "5.6",
-          "pythonVersion": "",
-          "nodeVersion": "",
+          "netFrameworkVersion": "[null()]",
+          "phpVersion": "[null()]",
+          "pythonVersion": "[null()]",
+          "nodeVersion": "[null()]",
           "linuxFxVersion": "",
           "requestTracingEnabled": false,
           "remoteDebuggingEnabled": false,
@@ -481,11 +695,11 @@
           "appSettings": [
             {
               "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
-              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingApi_name')), '2014-04-01').InstrumentationKey]"
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('VotingApi_name')), '2020-02-02').InstrumentationKey]"
             },
             {
               "name": "ApplicationInsights:InstrumentationKey",
-              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingApi_name')), '2014-04-01').InstrumentationKey]"
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('VotingApi_name')), '2020-02-02').InstrumentationKey]"
             },
             {
               "name": "ConnectionStrings:SqlDbConnection",
@@ -493,43 +707,88 @@
             }
           ]
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', variables('VotingApi_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "AppServiceHTTPLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceConsoleLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceAppLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceAuditLogs",
+                "enabled": false
+              },
+              {
+                "category": "AppServiceIPSecAuditLogs",
+                "enabled": false
+              },
+              {
+                "category": "AppServicePlatformLogs",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Web/sites",
-      "apiVersion": "2016-08-01",
+      "apiVersion": "2020-12-01",
       "name": "[parameters('VotingWeb_name')]",
       "location": "[variables('location')]",
       "dependsOn": [
-        "[resourceId('Microsoft.Web/serverfarms', parameters('VotingWebPlan_name'))]",
-        "[resourceId('microsoft.insights/components', parameters('VotingWeb_name'))]",
-        "[resourceId('Microsoft.Cache/Redis', parameters('Votingrediscache_name'))]",
-        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('servicebusvotingns_name'))]"
+        "[resourceId('Microsoft.Web/serverfarms', variables('VotingWebPlan_name'))]",
+        "[resourceId('Microsoft.Insights/components', parameters('VotingWeb_name'))]",
+        "[resourceId('Microsoft.Cache/Redis', variables('Votingrediscache_name'))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('databaseAccounts_votingcosmos_name'), 'cacheDB')]",
+        "[resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', variables('servicebusvotingns_name'), 'RootManageSharedAccessKey')]"
       ],
       "tags": {
-        "[concat('hidden-link:/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name,'/providers/Microsoft.Web/serverfarms/',parameters('VotingWebPlan_name'))]": "empty"
+        "[concat('hidden-link:/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Web/serverfarms/', variables('VotingWebPlan_name'))]": "empty"
       },
       "kind": "app",
       "identity": {
-        "principalId": null,
-        "tenantId": null,
         "type": "SystemAssigned"
       },
       "properties": {
         "enabled": true,
         "hostNameSslStates": [
           {
-            "name": "[concat(parameters('VotingWeb_name'),'.azurewebsites.net')]",
+            "name": "[concat(parameters('VotingWeb_name'), '.azurewebsites.net')]",
             "sslState": "Disabled",
             "hostType": "Standard"
           },
           {
-            "name": "[concat(parameters('VotingWeb_name'),'.scm.azurewebsites.net')]",
+            "name": "[concat(parameters('VotingWeb_name'), '.scm.azurewebsites.net')]",
             "sslState": "Disabled",
             "hostType": "Repository"
           }
         ],
-        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('VotingWebPlan_name'))]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('VotingWebPlan_name'))]",
         "reserved": false,
         "scmSiteAlsoStopped": false,
         "clientAffinityEnabled": true,
@@ -539,10 +798,10 @@
         "dailyMemoryTimeQuota": 0,
         "httpsOnly": true,
         "siteConfig": {
-          "netFrameworkVersion": "v4.7",
-          "phpVersion": "5.6",
-          "pythonVersion": "",
-          "nodeVersion": "",
+          "netFrameworkVersion": "[null()]",
+          "phpVersion": "[null()]",
+          "pythonVersion": "[null()]",
+          "nodeVersion": "[null()]",
           "linuxFxVersion": "",
           "requestTracingEnabled": false,
           "remoteDebuggingEnabled": false,
@@ -553,117 +812,159 @@
           "appSettings": [
             {
               "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
-              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingWeb_name')), '2014-04-01').InstrumentationKey]"
+              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingWeb_name')), '2020-02-02').InstrumentationKey]"
             },
             {
               "name": "ConnectionStrings:sbConnectionString",
-              "value": "[listKeys(resourceId(concat('Microsoft.ServiceBus/namespaces/AuthorizationRules'),parameters('servicebusvotingns_name'),'RootManageSharedAccessKey'),'2015-08-01').primaryConnectionString]"
+              "value": "[listKeys(resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', variables('servicebusvotingns_name'), 'RootManageSharedAccessKey'), '2021-01-01-preview').primaryConnectionString]"
             },
             {
               "name": "ConnectionStrings:VotingDataAPIBaseUri",
-              "value": "[concat('https://',parameters('VotingApi_name'),'.azurewebsites.net')]"
+              "value": "[concat('https://', variables('VotingApi_name'), '.azurewebsites.net')]"
             },
             {
               "name": "ApplicationInsights:InstrumentationKey",
-              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingWeb_name')), '2014-04-01').InstrumentationKey]"
+              "value": "[reference(resourceId('Microsoft.Insights/components', parameters('VotingWeb_name')), '2020-02-02').InstrumentationKey]"
             },
             {
               "name": "ConnectionStrings:RedisConnectionString",
-              "value": "[concat(parameters('Votingrediscache_name'),'.redis.cache.windows.net:6380,abortConnect=false,ssl=true,password=', listKeys(resourceId('Microsoft.Cache/Redis', parameters('Votingrediscache_name')), '2015-08-01').primaryKey)]"
+              "value": "[concat(variables('Votingrediscache_name'), '.redis.cache.windows.net:6380,abortConnect=false,ssl=true,password=', listKeys(resourceId('Microsoft.Cache/Redis', variables('Votingrediscache_name')), '2020-12-01').primaryKey)]"
             },
             {
               "name": "ConnectionStrings:queueName",
-              "value": "votingqueue"
+              "value": "sbq-voting"
             },
             {
               "name": "ConnectionStrings:CosmosUri",
-              "value": "[concat('https://',parameters('databaseAccounts_votingcosmos_name'),'.documents.azure.com:443/')]"
+              "value": "[concat('https://', variables('databaseAccounts_votingcosmos_name'), '.documents.azure.com:443/')]"
             },
             {
               "name": "ConnectionStrings:CosmosKey",
-              "value": "[listKeys(resourceId(concat('Microsoft.DocumentDB/databaseAccounts'),parameters('databaseAccounts_votingcosmos_name')),'2015-04-08').primaryMasterKey]"
+              "value": "[listKeys(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('databaseAccounts_votingcosmos_name')), '2021-04-01-preview').primaryMasterKey]"
             }
           ]
         }
-      }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', parameters('VotingWeb_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "AppServiceHTTPLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceConsoleLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceAppLogs",
+                "enabled": true
+              },
+              {
+                "category": "AppServiceAuditLogs",
+                "enabled": false
+              },
+              {
+                "category": "AppServiceIPSecAuditLogs",
+                "enabled": false
+              },
+              {
+                "category": "AppServicePlatformLogs",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "type": "Microsoft.Network/frontdoors",
-      "apiVersion": "2018-08-01",
-      "name": "[parameters('frontdoors_VotingFrontDoor_name')]",
-      "location": "Global",
+      "apiVersion": "2020-05-01",
+      "name": "[variables('frontdoors_VotingFrontDoor_name')]",
+      "location": "global",
       "properties": {
-        "resourceState": "Enabled",
-        "backendPools": [
-          {
-            "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), concat('/BackendPools/', parameters('frontdoors_VotingFrontDoor_name'), 'BackendPool'))]",
-            "name": "[concat(parameters('frontdoors_VotingFrontDoor_name'), 'BackendPool')]",
-            "properties": {
-              "backends": [
-                {
-                  "address": "[concat(parameters('VotingWeb_name'),'.azurewebsites.net')]",
-                  "httpPort": 80,
-                  "httpsPort": 443,
-                  "priority": 1,
-                  "weight": 50,
-                  "backendHostHeader": "[concat(parameters('VotingWeb_name'),'.azurewebsites.net')]",
-                  "enabledState": "Enabled"
-                }
-              ],
-              "healthProbeSettings": {
-                "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), '/healthProbeSettings/healthProbeSettings-1569015585276')]"
-              },
-              "loadBalancingSettings": {
-                "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), '/loadBalancingSettings/loadBalancingSettings-1569015585276')]"
-              },
-              "resourceState": "Enabled"
-            }
-          }
-        ],
+        "friendlyName": "[variables('frontdoors_VotingFrontDoor_name')]",
+        "enabledState": "Enabled",
         "healthProbeSettings": [
           {
-            "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), '/HealthProbeSettings/healthProbeSettings-1569015585276')]",
-            "name": "healthProbeSettings-1569015585276",
+            "name": "default",
             "properties": {
-              "intervalInSeconds": 30,
               "path": "/",
               "protocol": "Https",
-              "resourceState": "Enabled"
-            }
-          }
-        ],
-        "frontendEndpoints": [
-          {
-            "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), concat('/FrontendEndpoints/', parameters('frontdoors_VotingFrontDoor_name'), '-azurefd-net'))]",
-            "name": "[concat(parameters('frontdoors_VotingFrontDoor_name'), '-azurefd-net')]",
-            "properties": {
-              "hostName": "[concat(parameters('frontdoors_VotingFrontDoor_name'), '.azurefd.net')]",
-              "sessionAffinityEnabledState": "Disabled",
-              "sessionAffinityTtlSeconds": 0,
-              "resourceState": "Enabled"
+              "intervalInSeconds": 30,
+              "healthProbeMethod": "Get",
+              "enabledState": "Enabled"
             }
           }
         ],
         "loadBalancingSettings": [
           {
-            "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), '/LoadBalancingSettings/loadBalancingSettings-1569015585276')]",
-            "name": "loadBalancingSettings-1569015585276",
+            "name": "default",
             "properties": {
-              "additionalLatencyMilliseconds": 0,
               "sampleSize": 4,
               "successfulSamplesRequired": 2,
-              "resourceState": "Enabled"
+              "additionalLatencyMilliseconds": 0
+            }
+          }
+        ],
+        "frontendEndpoints": [
+          {
+            "name": "default",
+            "properties": {
+              "hostName": "[concat(variables('frontdoors_VotingFrontDoor_name'), '.azurefd.net')]",
+              "sessionAffinityEnabledState": "Disabled",
+              "sessionAffinityTtlSeconds": 0,
+              "webApplicationFirewallPolicyLink": "[null()]"
+            }
+          }
+        ],
+        "backendPools": [
+          {
+            "name": "voting-web",
+            "properties": {
+              "backends": [
+                {
+                  "address": "[concat(parameters('VotingWeb_name'), '.azurewebsites.net')]",
+                  "privateLinkResourceId": "[null()]",
+                  "enabledState": "Enabled",
+                  "httpPort": 80,
+                  "httpsPort": 443,
+                  "priority": 1,
+                  "weight": 50,
+                  "backendHostHeader": "[concat(parameters('VotingWeb_name'), '.azurewebsites.net')]"
+                }
+              ],
+              "healthProbeSettings": {
+                "id": "[resourceId('Microsoft.Network/frontdoors/healthProbeSettings', variables('frontdoors_VotingFrontDoor_name'), 'default')]"
+              },
+              "loadBalancingSettings": {
+                "id": "[resourceId('Microsoft.Network/frontdoors/loadBalancingSettings', variables('frontdoors_VotingFrontDoor_name'), 'default')]"
+              }
             }
           }
         ],
         "routingRules": [
           {
-            "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), '/RoutingRules/Default')]",
-            "name": "Default",
+            "name": "all",
             "properties": {
               "frontendEndpoints": [
                 {
-                  "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), concat('/frontendEndpoints/', parameters('frontdoors_VotingFrontDoor_name'), '-azurefd-net'))]"
+                  "id": "[resourceId('Microsoft.Network/frontdoors/frontendEndpoints', variables('frontdoors_VotingFrontDoor_name'), 'default')]"
                 }
               ],
               "acceptedProtocols": [
@@ -673,18 +974,54 @@
               "patternsToMatch": [
                 "/*"
               ],
-              "forwardingProtocol": "HttpsOnly",
-              "backendPool": {
-                "id": "[concat(resourceId('Microsoft.Network/frontdoors', parameters('frontdoors_VotingFrontDoor_name')), concat('/backendPools/', parameters('frontdoors_VotingFrontDoor_name'), 'BackendPool'))]"
-              },
               "enabledState": "Enabled",
-              "resourceState": "Enabled"
+              "routeConfiguration": {
+                "@odata.type": "#Microsoft.Azure.FrontDoor.Models.FrontdoorForwardingConfiguration",
+                "customForwardingPath": "[null()]",
+                "forwardingProtocol": "MatchRequest",
+                "backendPool": {
+                  "id": "[resourceId('Microsoft.Network/frontdoors/backendPools', variables('frontdoors_VotingFrontDoor_name'), 'voting-web')]"
+                },
+                "cacheConfiguration": "[null()]"
+              }
             }
           }
         ],
-        "enabledState": "Enabled",
-        "friendlyName": "[parameters('frontdoors_VotingFrontDoor_name')]"
-      }
+        "backendPoolsSettings": {
+          "enforceCertificateNameCheck": "Enabled",
+          "sendRecvTimeoutSeconds": 30
+        }
+      },
+      "resources": [
+        {
+          "type": "providers/diagnosticSettings",
+          "apiVersion": "2017-05-01-preview",
+          "name": "Microsoft.Insights/default",
+          "dependsOn": [
+            "[resourceId('Microsoft.Network/frontdoors', variables('frontdoors_VotingFrontDoor_name'))]",
+            "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]"
+          ],
+          "properties": {
+            "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', 'ws-resourcelogs')]",
+            "logs": [
+              {
+                "category": "FrontdoorAccessLog",
+                "enabled": true
+              },
+              {
+                "category": "FrontdoorWebApplicationFirewallLog",
+                "enabled": true
+              }
+            ],
+            "metrics": [
+              {
+                "category": "AllMetrics",
+                "enabled": false
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

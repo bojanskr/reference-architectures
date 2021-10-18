@@ -7,6 +7,7 @@ using System;
 using System.Data.SqlClient;
 using System.Security;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
@@ -17,35 +18,29 @@ namespace FunctionApp
     {
         [FunctionName("VoteCounter")]
         public static async Task Run(
-            [ServiceBusTrigger("votingqueue", Connection = "SERVICEBUS_CONNECTION_STRING")]string myQueueItem,
+            [ServiceBusTrigger("sbq-voting", Connection = "SERVICEBUS_CONNECTION_STRING")]string myQueueItem,
+            CancellationToken cancellationToken,
             ILogger log)
         {
             var vote = JsonSerializer.Deserialize<Vote>(myQueueItem);
 
             try
             {
-                var connectionString = Environment.GetEnvironmentVariable("sqldb_connection");
-                using (SqlConnection conn = new SqlConnection(connectionString))
+                using var conn = new SqlConnection(Environment.GetEnvironmentVariable("sqldb_connection"));
+                await conn.OpenAsync(cancellationToken);
+
+                using var cmd = new SqlCommand("UPDATE dbo.Counts SET Count = Count + 1 WHERE ID = @ID;", conn);
+                cmd.Parameters.AddWithValue("@ID", vote.Id);
+
+                var rows = await cmd.ExecuteNonQueryAsync();
+                if (rows == 0)
                 {
-                    conn.Open();
-
-                    var text = "UPDATE dbo.Counts  SET Count = Count + 1 WHERE ID = @ID;";
-
-                    using (SqlCommand cmd = new SqlCommand(text, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ID", vote.Id);
-
-                        var rows = await cmd.ExecuteNonQueryAsync();
-                        if (rows == 0)
-                        {
-                            log.LogError("id entry not found on the database {id}", vote.Id);
-                        }
-                    }
+                    log.LogError("Entry not found on the database for ID: {id}", vote.Id);
                 }
             }
             catch (Exception ex) when (ex is ArgumentNullException ||
-                                    ex is SecurityException ||
-                                    ex is SqlException)
+                                       ex is SecurityException ||
+                                       ex is SqlException)
             {
                 log.LogError(ex, "Sql Exception");
             }
